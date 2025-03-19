@@ -1,6 +1,7 @@
 {
-    loop 4 { c4:4 d4:8 d4:8 e4:2 }
-    [c4 e4 g4]|1
-    E4m7|2
-    strum 100ms [c4 c5 c6]|1
+    loop 3 { C4:4 D4:8 D4:8 E4:2 }
+    [C4 E4 G4]|1
+    \Eb4m7|2
+    \G#3m|2
+    strum 100ms [C4 C5 C6]|1
 }

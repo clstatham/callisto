@@ -261,7 +261,7 @@ pub fn parse(input: &str) -> ParseResult<Root> {
     Ok(ast)
 }
 
-pub fn parse_sequence(token_stream: &mut TokenStream) -> ParseResult<Sequence> {
+fn parse_sequence(token_stream: &mut TokenStream) -> ParseResult<Sequence> {
     let mut sequence = Sequence::default();
 
     loop {
@@ -274,9 +274,14 @@ pub fn parse_sequence(token_stream: &mut TokenStream) -> ParseResult<Sequence> {
                 token_stream.bump()?;
                 break;
             }
+            Token::Backslash => {
+                token_stream.bump()?;
+                // let chord = parse_named_chord(token_stream)?;
+                // sequence.notes.push(SeqEvent::Chord(chord));
+            }
             _ => {
-                let note = parse_note(token_stream)?;
-                sequence.notes.push(note);
+                let note = parse_single_note(token_stream)?;
+                sequence.notes.push(SeqEvent::Single(note));
             }
         }
     }
@@ -284,22 +289,35 @@ pub fn parse_sequence(token_stream: &mut TokenStream) -> ParseResult<Sequence> {
     Ok(sequence)
 }
 
-pub fn parse_note(token_stream: &mut TokenStream) -> ParseResult<Note> {
-    let token = token_stream.expect(Token::Text)?;
+fn parse_single_note(token_stream: &mut TokenStream) -> ParseResult<SingleNote> {
+    let mut accidental = Accidental::Natural;
+
+    let token = token_stream.expect(Token::NoteName)?;
     let note_name = match token.slice() {
-        "a" => NoteName::A,
-        "b" => NoteName::B,
-        "c" => NoteName::C,
-        "d" => NoteName::D,
-        "e" => NoteName::E,
-        "f" => NoteName::F,
-        "g" => NoteName::G,
+        "A" => NoteName::A,
+        "B" => NoteName::B,
+        "C" => NoteName::C,
+        "D" => NoteName::D,
+        "E" => NoteName::E,
+        "F" => NoteName::F,
+        "G" => NoteName::G,
         _ => {
             return Err(
                 ParsingError::InvalidNoteName(token.slice().to_string()).spanned_from_token(&token)
             );
         }
     };
+
+    let token = token_stream.peek()?;
+    if token.token == Token::Sharp || token.token == Token::Flat || token.token == Token::Natural {
+        accidental = match token.token {
+            Token::Sharp => Accidental::Sharp,
+            Token::Flat => Accidental::Flat,
+            Token::Natural => Accidental::Natural,
+            _ => unreachable!(),
+        };
+        token_stream.bump()?;
+    }
 
     let token = token_stream.expect(Token::Number)?;
     let octave_number = match token.slice().parse::<i32>() {
@@ -337,10 +355,11 @@ pub fn parse_note(token_stream: &mut TokenStream) -> ParseResult<Note> {
         }
     };
 
-    Ok(Note {
+    Ok(SingleNote {
         note_name,
         octave_number,
         note_length,
+        accidental,
     })
 }
 
@@ -352,7 +371,7 @@ mod tests {
 
     #[test]
     fn test_parse_one_bar() {
-        let ast = parse("{ c4:4 d4:8 d4:8 e4:2 }");
+        let ast = parse("{ Bb4:4 D4:8 D4:8 E4:2 }");
         if let Err(e) = ast {
             panic!("{}", e);
         }
