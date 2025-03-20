@@ -40,6 +40,10 @@ pub enum ParsingError {
     InvalidNoteName(String),
     #[error("Invalid note length: {0}")]
     InvalidNoteLength(i32),
+    #[error("Invalid chord quality: {0}")]
+    InvalidChordQuality(String),
+    #[error("Invalid chord extension: {0}")]
+    InvalidChordExtension(String),
     #[error("Expected integer")]
     ParseIntError(#[from] ParseIntError),
 }
@@ -276,13 +280,13 @@ fn parse_sequence(token_stream: &mut TokenStream) -> ParseResult<Sequence> {
             }
             Token::Backslash => {
                 token_stream.bump()?;
-                // let chord = parse_named_chord(token_stream)?;
-                // sequence.notes.push(SeqEvent::Chord(chord));
+                let chord = parse_named_chord(token_stream)?;
+                sequence.notes.push(SeqEvent::NamedChord(chord));
             }
             Token::OBracket => {
                 token_stream.bump()?;
                 let chord = parse_list_chord(token_stream)?;
-                sequence.notes.push(SeqEvent::Chord(chord));
+                sequence.notes.push(SeqEvent::ListChord(chord));
             }
             Token::NoteName => {
                 let note = parse_single_note(token_stream)?;
@@ -364,7 +368,7 @@ fn parse_single_note(token_stream: &mut TokenStream) -> ParseResult<SingleNote> 
     })
 }
 
-fn parse_list_chord(token_stream: &mut TokenStream) -> ParseResult<Chord> {
+fn parse_list_chord(token_stream: &mut TokenStream) -> ParseResult<ListChord> {
     let mut notes = Vec::new();
     loop {
         let token = token_stream.peek()?;
@@ -391,7 +395,72 @@ fn parse_list_chord(token_stream: &mut TokenStream) -> ParseResult<Chord> {
 
     let note_length = parse_note_length(token_stream)?;
 
-    Ok(Chord { notes, note_length })
+    Ok(ListChord { notes, note_length })
+}
+
+fn parse_chord_quality(token_stream: &mut TokenStream) -> ParseResult<ChordQuality> {
+    let token = token_stream.expect(Token::ChordQuality)?;
+    ChordQuality::from_str(token.slice()).map_err(|_| {
+        ParsingError::InvalidChordQuality(token.slice().to_string()).spanned_from_token(&token)
+    })
+}
+
+fn parse_chord_extensions(token_stream: &mut TokenStream) -> ParseResult<Vec<ChordExtension>> {
+    let mut extensions = Vec::new();
+    loop {
+        let token = token_stream.peek()?;
+        match token.token {
+            Token::Number => {
+                if token.slice() == "7" {
+                    token_stream.bump()?;
+                    extensions.push(ChordExtension::Seventh);
+                } else {
+                    return Err(
+                        ParsingError::InvalidChordExtension(token.slice().to_string())
+                            .spanned_from_token(token),
+                    );
+                }
+            }
+            Token::ChordExtension => {
+                let extension = ChordExtension::from_str(token.slice()).map_err(|_| {
+                    ParsingError::InvalidChordExtension(token.slice().to_string())
+                        .spanned_from_token(token)
+                })?;
+                token_stream.bump()?;
+                extensions.push(extension);
+            }
+            _ => {
+                break;
+            }
+        }
+    }
+    Ok(extensions)
+}
+
+fn parse_chord_name(token_stream: &mut TokenStream) -> ParseResult<ChordName> {
+    let root = parse_note_name(token_stream)?;
+    let root_accidental = parse_accidental(token_stream)?;
+    let root_octave_number = parse_octave_number(token_stream)?;
+    let quality = parse_chord_quality(token_stream)?;
+    let extensions = parse_chord_extensions(token_stream)?;
+
+    Ok(ChordName {
+        root,
+        root_octave_number,
+        root_accidental,
+        quality,
+        extensions,
+    })
+}
+
+fn parse_named_chord(token_stream: &mut TokenStream) -> ParseResult<NamedChord> {
+    let chord_name = parse_chord_name(token_stream)?;
+    let note_length = parse_note_length(token_stream)?;
+
+    Ok(NamedChord {
+        chord_name,
+        note_length,
+    })
 }
 
 #[cfg(test)]
@@ -412,12 +481,27 @@ mod tests {
 
     #[test]
     fn test_parse_chord() {
-        let ast = parse(
-            "{ 
-        [C4 C5 C6]|4
-        [D#4 Db5 D6]|1
-         }",
-        );
+        let ast = parse("{ [Bb4 Eb4]:2 }");
+        if let Err(e) = ast {
+            panic!("{}", e);
+        }
+        // let ast = ast.unwrap();
+        // dbg!(&ast);
+    }
+
+    #[test]
+    fn test_parse_bar_note_length() {
+        let ast = parse("{ Bb4|1 D4|2 D4|1 E4|4 }");
+        if let Err(e) = ast {
+            panic!("{}", e);
+        }
+        // let ast = ast.unwrap();
+        // dbg!(&ast);
+    }
+
+    #[test]
+    fn test_parse_named_chord() {
+        let ast = parse(r"{ \E4min7:4 \C4majadd9:8 }");
         if let Err(e) = ast {
             panic!("{}", e);
         }

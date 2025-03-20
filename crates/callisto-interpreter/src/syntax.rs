@@ -35,6 +35,10 @@ pub enum Token {
     Tempo,
     #[token(r"time")]
     Time,
+    #[regex(r"maj|min|dim|aug")]
+    ChordQuality,
+    #[regex(r"add9|add11|add13")]
+    ChordExtension,
 }
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -55,11 +59,12 @@ pub struct Sequence {
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SeqEvent {
     Single(SingleNote),
-    Chord(Chord),
+    ListChord(ListChord),
+    NamedChord(NamedChord),
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Chord {
+pub struct ListChord {
     pub notes: Vec<ChordNote>,
     pub note_length: NoteLength,
 }
@@ -69,6 +74,64 @@ pub struct ChordNote {
     pub note_name: NoteName,
     pub octave_number: i32,
     pub accidental: Accidental,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ChordName {
+    pub root: NoteName,
+    pub root_accidental: Accidental,
+    pub root_octave_number: i32,
+    pub quality: ChordQuality,
+    pub extensions: Vec<ChordExtension>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct NamedChord {
+    pub chord_name: ChordName,
+    pub note_length: NoteLength,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ChordQuality {
+    Major,
+    Minor,
+    Diminished,
+    Augmented,
+}
+
+impl FromStr for ChordQuality {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "maj" => Ok(ChordQuality::Major),
+            "min" => Ok(ChordQuality::Minor),
+            "dim" => Ok(ChordQuality::Diminished),
+            "aug" => Ok(ChordQuality::Augmented),
+            _ => Err(()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ChordExtension {
+    Seventh,
+    Ninth,
+    Eleventh,
+    Thirteenth,
+}
+
+impl FromStr for ChordExtension {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "add9" => Ok(ChordExtension::Ninth),
+            "add11" => Ok(ChordExtension::Eleventh),
+            "add13" => Ok(ChordExtension::Thirteenth),
+            _ => Err(()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]

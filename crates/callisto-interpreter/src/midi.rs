@@ -8,6 +8,46 @@ use crate::syntax::*;
 
 const PPQ: u32 = 96;
 
+const MAJOR_SCALE: [u8; 7] = [0, 2, 4, 5, 7, 9, 11];
+const MINOR_SCALE: [u8; 7] = [0, 2, 3, 5, 7, 8, 10];
+const DIMINISHED_SCALE: [u8; 7] = [0, 2, 3, 5, 6, 8, 10];
+const AUGMENTED_SCALE: [u8; 7] = [0, 2, 4, 5, 7, 9, 11];
+
+pub fn midi_named_chord(
+    root: NoteName,
+    root_accidental: Accidental,
+    root_octave_number: i32,
+    quality: ChordQuality,
+    extensions: &[ChordExtension],
+) -> Vec<u8> {
+    let root = midi_note(root, root_accidental, root_octave_number);
+    let root = root.as_int();
+
+    let scale = match quality {
+        ChordQuality::Major => MAJOR_SCALE,
+        ChordQuality::Minor => MINOR_SCALE,
+        ChordQuality::Diminished => DIMINISHED_SCALE,
+        ChordQuality::Augmented => AUGMENTED_SCALE,
+    };
+
+    let mut chord = vec![root, root + scale[2], root + scale[4]];
+    if extensions.contains(&ChordExtension::Seventh) {
+        chord.push(root + scale[6]);
+    }
+    if extensions.contains(&ChordExtension::Ninth) {
+        chord.push(root + scale[1] + 12);
+    }
+    if extensions.contains(&ChordExtension::Eleventh) {
+        chord.push(root + scale[3] + 12);
+    }
+    if extensions.contains(&ChordExtension::Thirteenth) {
+        chord.push(root + scale[5] + 12);
+    }
+    chord.sort();
+    chord.dedup();
+    chord
+}
+
 pub fn midi_note_length(note_length: NoteLength) -> u28 {
     let length = match note_length {
         NoteLength::SixtyFourth => PPQ / 16,
@@ -108,11 +148,11 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
                 track.push(first_event);
                 track.push(second_event);
             }
-            SeqEvent::Chord(chord) => {
-                let Chord { notes, note_length } = chord;
+            SeqEvent::ListChord(chord) => {
+                let ListChord { notes, note_length } = chord;
                 let chord_length = midi_note_length(*note_length);
-                let mut chord_notes = Vec::new();
-                let mut stop_notes = Vec::new();
+                let mut chord_events = Vec::new();
+                let mut stop_events = Vec::new();
 
                 for (i, note) in notes.iter().enumerate() {
                     let &ChordNote {
@@ -147,12 +187,63 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
                         },
                     };
 
-                    chord_notes.push(first_event);
-                    stop_notes.push(second_event);
+                    chord_events.push(first_event);
+                    stop_events.push(second_event);
                 }
 
-                track.extend(chord_notes);
-                track.extend(stop_notes);
+                track.extend(chord_events);
+                track.extend(stop_events);
+            }
+            SeqEvent::NamedChord(named_chord) => {
+                let NamedChord {
+                    chord_name,
+                    note_length,
+                } = named_chord;
+                let chord_length = midi_note_length(*note_length);
+                let chord_notes = midi_named_chord(
+                    chord_name.root,
+                    chord_name.root_accidental,
+                    chord_name.root_octave_number,
+                    chord_name.quality,
+                    &chord_name.extensions,
+                );
+
+                let mut chord_events = Vec::new();
+                let mut stop_events = Vec::new();
+
+                for (i, note) in chord_notes.iter().enumerate() {
+                    let key = u7::new(*note);
+
+                    let first_message = MidiMessage::NoteOn {
+                        key,
+                        vel: u7::new(127),
+                    };
+                    let second_message = MidiMessage::NoteOff {
+                        key,
+                        vel: u7::new(0),
+                    };
+
+                    let first_event = TrackEvent {
+                        delta: u28::new(0),
+                        kind: TrackEventKind::Midi {
+                            channel: u4::new(0),
+                            message: first_message,
+                        },
+                    };
+                    let second_event = TrackEvent {
+                        delta: if i == 0 { chord_length } else { u28::new(0) },
+                        kind: TrackEventKind::Midi {
+                            channel: u4::new(0),
+                            message: second_message,
+                        },
+                    };
+
+                    chord_events.push(first_event);
+                    stop_events.push(second_event);
+                }
+
+                track.extend(chord_events);
+                track.extend(stop_events);
             }
         }
     }
@@ -175,12 +266,7 @@ mod tests {
 
     #[test]
     fn test_midi() {
-        let input = r#"
-            { [C#4 Eb4]|2 }
-        "#;
-
-        // let midi = Smf::parse(include_bytes!("../one_bar_ref.mid")).unwrap();
-        // dbg!(midi);
+        let input = r"{ \E4min7|1 \C4majadd9|1 }";
 
         let ast = crate::parser::parse(input);
         let ast = match ast {

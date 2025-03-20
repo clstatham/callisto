@@ -1,7 +1,7 @@
 {
     loop 3 { C4:4 D4:8 D4:8 E4:2 }
     [C4 E4 G4]|1
-    \Eb4m7|2
-    \G#3m|2
+    \Eb4maj7|2
+    \G#3min|2
     strum 100ms [C4 C5 C6]|1
 }
