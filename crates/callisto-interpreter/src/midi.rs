@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn test_midi() {
         let input = r#"
-            { [C#4 Eb4]:1 }
+            { [C#4 Eb4]|2 }
         "#;
 
         // let midi = Smf::parse(include_bytes!("../one_bar_ref.mid")).unwrap();

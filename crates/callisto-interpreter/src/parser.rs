@@ -329,10 +329,25 @@ fn parse_octave_number(token_stream: &mut TokenStream) -> ParseResult<i32> {
 }
 
 fn parse_note_length(token_stream: &mut TokenStream) -> ParseResult<NoteLength> {
-    token_stream.expect(Token::Colon)?;
-    let token = token_stream.expect(Token::Number)?;
-    NoteLength::from_str(token.slice())
-        .map_err(|_| ParsingError::InvalidNoteLength(0).spanned_from_token(&token))
+    let token = token_stream.peek()?;
+    match token.token {
+        Token::Colon => {
+            token_stream.bump()?;
+            let token = token_stream.expect(Token::Number)?;
+            Ok(NoteLength::from_str(token.slice())
+                .map_err(|_| ParsingError::InvalidNoteLength(0).spanned_from_token(&token))?)
+        }
+        Token::Bar => {
+            token_stream.bump()?;
+            let token = token_stream.expect(Token::Number)?;
+            let length = token
+                .slice()
+                .parse::<u32>()
+                .map_err(|_| ParsingError::InvalidNoteLength(0).spanned_from_token(&token))?;
+            Ok(NoteLength::Bars(length))
+        }
+        _ => Err(ParsingError::UnexpectedToken(token.token).spanned_from_token(token)),
+    }
 }
 
 fn parse_single_note(token_stream: &mut TokenStream) -> ParseResult<SingleNote> {
@@ -399,10 +414,8 @@ mod tests {
     fn test_parse_chord() {
         let ast = parse(
             "{ 
-        [C4 C5 C6]:4
-        [D4 D5 D6]:8
-        [D#4 Db5 D6]:8
-        [F4 F5 F6]:4
+        [C4 C5 C6]|4
+        [D#4 Db5 D6]|1
          }",
         );
         if let Err(e) = ast {

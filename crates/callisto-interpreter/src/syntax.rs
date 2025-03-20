@@ -17,6 +17,8 @@ pub enum Token {
     Flat,
     #[token(r":")]
     Colon,
+    #[token(r"|")]
+    Bar,
     #[token(r"/")]
     Slash,
     #[token(r"\")]
