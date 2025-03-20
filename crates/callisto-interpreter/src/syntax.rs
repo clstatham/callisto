@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use logos::Logos;
 
 #[derive(Logos, Debug, PartialEq, Eq, Clone, Copy)]
@@ -13,8 +15,6 @@ pub enum Token {
     NoteName,
     #[token(r"b", priority = 4)]
     Flat,
-    #[token(r"n", priority = 4)]
-    Natural,
     #[token(r":")]
     Colon,
     #[token(r"/")]
@@ -56,10 +56,17 @@ pub enum SeqEvent {
     Chord(Chord),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Chord {
-    pub notes: Vec<SingleNote>,
+    pub notes: Vec<ChordNote>,
     pub note_length: NoteLength,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ChordNote {
+    pub note_name: NoteName,
+    pub octave_number: i32,
+    pub accidental: Accidental,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -99,22 +106,24 @@ pub enum NoteName {
     G,
 }
 
-impl NoteName {
-    pub fn from_string(s: &str) -> Option<Self> {
+impl FromStr for NoteName {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "A" => Some(NoteName::A),
-            "B" => Some(NoteName::B),
-            "C" => Some(NoteName::C),
-            "D" => Some(NoteName::D),
-            "E" => Some(NoteName::E),
-            "F" => Some(NoteName::F),
-            "G" => Some(NoteName::G),
-            _ => None,
+            "A" => Ok(NoteName::A),
+            "B" => Ok(NoteName::B),
+            "C" => Ok(NoteName::C),
+            "D" => Ok(NoteName::D),
+            "E" => Ok(NoteName::E),
+            "F" => Ok(NoteName::F),
+            "G" => Ok(NoteName::G),
+            _ => Err(()),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum NoteLength {
     SixtyFourth,
     ThirtySecond,
@@ -122,20 +131,24 @@ pub enum NoteLength {
     Eighth,
     Quarter,
     Half,
+    #[default]
     Whole,
+    Bars(u32),
 }
 
-impl NoteLength {
-    pub fn from_string(s: &str) -> Option<Self> {
+impl FromStr for NoteLength {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "64" => Some(NoteLength::SixtyFourth),
-            "32" => Some(NoteLength::ThirtySecond),
-            "16" => Some(NoteLength::Sixteenth),
-            "8" => Some(NoteLength::Eighth),
-            "4" => Some(NoteLength::Quarter),
-            "2" => Some(NoteLength::Half),
-            "1" => Some(NoteLength::Whole),
-            _ => None,
+            "64" => Ok(NoteLength::SixtyFourth),
+            "32" => Ok(NoteLength::ThirtySecond),
+            "16" => Ok(NoteLength::Sixteenth),
+            "8" => Ok(NoteLength::Eighth),
+            "4" => Ok(NoteLength::Quarter),
+            "2" => Ok(NoteLength::Half),
+            "1" => Ok(NoteLength::Whole),
+            _ => Err(()),
         }
     }
 }

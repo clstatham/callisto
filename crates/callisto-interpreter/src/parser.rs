@@ -1,4 +1,4 @@
-use std::{num::ParseIntError, ops::Range};
+use std::{num::ParseIntError, ops::Range, str::FromStr};
 
 use logos::Logos;
 use thiserror::Error;
@@ -279,9 +279,17 @@ fn parse_sequence(token_stream: &mut TokenStream) -> ParseResult<Sequence> {
                 // let chord = parse_named_chord(token_stream)?;
                 // sequence.notes.push(SeqEvent::Chord(chord));
             }
-            _ => {
+            Token::OBracket => {
+                token_stream.bump()?;
+                let chord = parse_list_chord(token_stream)?;
+                sequence.notes.push(SeqEvent::Chord(chord));
+            }
+            Token::NoteName => {
                 let note = parse_single_note(token_stream)?;
                 sequence.notes.push(SeqEvent::Single(note));
+            }
+            _ => {
+                return Err(ParsingError::UnexpectedToken(token.token).spanned_from_token(token));
             }
         }
     }
@@ -289,71 +297,49 @@ fn parse_sequence(token_stream: &mut TokenStream) -> ParseResult<Sequence> {
     Ok(sequence)
 }
 
-fn parse_single_note(token_stream: &mut TokenStream) -> ParseResult<SingleNote> {
-    let mut accidental = Accidental::Natural;
-
+fn parse_note_name(token_stream: &mut TokenStream) -> ParseResult<NoteName> {
     let token = token_stream.expect(Token::NoteName)?;
-    let note_name = match token.slice() {
-        "A" => NoteName::A,
-        "B" => NoteName::B,
-        "C" => NoteName::C,
-        "D" => NoteName::D,
-        "E" => NoteName::E,
-        "F" => NoteName::F,
-        "G" => NoteName::G,
-        _ => {
-            return Err(
-                ParsingError::InvalidNoteName(token.slice().to_string()).spanned_from_token(&token)
-            );
-        }
-    };
+    NoteName::from_str(token.slice()).map_err(|_| {
+        ParsingError::InvalidNoteName(token.slice().to_string()).spanned_from_token(&token)
+    })
+}
 
+fn parse_accidental(token_stream: &mut TokenStream) -> ParseResult<Accidental> {
     let token = token_stream.peek()?;
-    if token.token == Token::Sharp || token.token == Token::Flat || token.token == Token::Natural {
-        accidental = match token.token {
-            Token::Sharp => Accidental::Sharp,
-            Token::Flat => Accidental::Flat,
-            Token::Natural => Accidental::Natural,
-            _ => unreachable!(),
-        };
-        token_stream.bump()?;
+    let accidental = match token.token {
+        Token::Sharp => {
+            token_stream.bump()?;
+            Accidental::Sharp
+        }
+        Token::Flat => {
+            token_stream.bump()?;
+            Accidental::Flat
+        }
+        _ => Accidental::Natural,
+    };
+    Ok(accidental)
+}
+
+fn parse_octave_number(token_stream: &mut TokenStream) -> ParseResult<i32> {
+    let token = token_stream.expect(Token::Number)?;
+    match token.slice().parse::<i32>() {
+        Ok(octave) => Ok(octave),
+        Err(e) => Err(ParsingError::ParseIntError(e).spanned_from_token(&token)),
     }
+}
 
-    let token = token_stream.expect(Token::Number)?;
-    let octave_number = match token.slice().parse::<i32>() {
-        Ok(octave) => octave,
-        Err(e) => {
-            return Err(ParsingError::ParseIntError(e).spanned_from_token(&token));
-        }
-    };
-
+fn parse_note_length(token_stream: &mut TokenStream) -> ParseResult<NoteLength> {
     token_stream.expect(Token::Colon)?;
-
     let token = token_stream.expect(Token::Number)?;
-    let note_length = match token.slice().parse::<i32>() {
-        Ok(length) => {
-            if length <= 0 {
-                return Err(ParsingError::InvalidNoteLength(length).spanned_from_token(&token));
-            }
-            length
-        }
-        Err(e) => {
-            return Err(ParsingError::ParseIntError(e).spanned_from_token(&token));
-        }
-    };
+    NoteLength::from_str(token.slice())
+        .map_err(|_| ParsingError::InvalidNoteLength(0).spanned_from_token(&token))
+}
 
-    let note_length = match note_length {
-        1 => NoteLength::Whole,
-        2 => NoteLength::Half,
-        4 => NoteLength::Quarter,
-        8 => NoteLength::Eighth,
-        16 => NoteLength::Sixteenth,
-        32 => NoteLength::ThirtySecond,
-        64 => NoteLength::SixtyFourth,
-        _ => {
-            return Err(ParsingError::InvalidNoteLength(note_length).spanned_from_token(&token));
-        }
-    };
+fn parse_single_note(token_stream: &mut TokenStream) -> ParseResult<SingleNote> {
+    let note_name = parse_note_name(token_stream)?;
+    let accidental = parse_accidental(token_stream)?;
+    let octave_number = parse_octave_number(token_stream)?;
+    let note_length = parse_note_length(token_stream)?;
 
     Ok(SingleNote {
         note_name,
@@ -361,6 +347,36 @@ fn parse_single_note(token_stream: &mut TokenStream) -> ParseResult<SingleNote> 
         note_length,
         accidental,
     })
+}
+
+fn parse_list_chord(token_stream: &mut TokenStream) -> ParseResult<Chord> {
+    let mut notes = Vec::new();
+    loop {
+        let token = token_stream.peek()?;
+        match token.token {
+            Token::Whitespace => {
+                token_stream.bump()?;
+            }
+            Token::CBracket => {
+                token_stream.bump()?;
+                break;
+            }
+            _ => {
+                let note = parse_note_name(token_stream)?;
+                let accidental = parse_accidental(token_stream)?;
+                let octave_number = parse_octave_number(token_stream)?;
+                notes.push(ChordNote {
+                    note_name: note,
+                    octave_number,
+                    accidental,
+                });
+            }
+        }
+    }
+
+    let note_length = parse_note_length(token_stream)?;
+
+    Ok(Chord { notes, note_length })
 }
 
 #[cfg(test)]
@@ -372,6 +388,23 @@ mod tests {
     #[test]
     fn test_parse_one_bar() {
         let ast = parse("{ Bb4:4 D4:8 D4:8 E4:2 }");
+        if let Err(e) = ast {
+            panic!("{}", e);
+        }
+        // let ast = ast.unwrap();
+        // dbg!(&ast);
+    }
+
+    #[test]
+    fn test_parse_chord() {
+        let ast = parse(
+            "{ 
+        [C4 C5 C6]:4
+        [D4 D5 D6]:8
+        [D#4 Db5 D6]:8
+        [F4 F5 F6]:4
+         }",
+        );
         if let Err(e) = ast {
             panic!("{}", e);
         }
