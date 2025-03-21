@@ -278,6 +278,18 @@ fn parse_sequence(token_stream: &mut TokenStream) -> ParseResult<Sequence> {
                 token_stream.bump()?;
                 break;
             }
+            Token::Tempo => {
+                token_stream.bump()?;
+                token_stream.expect(Token::Whitespace)?;
+                let tempo = parse_tempo(token_stream)?;
+                sequence.tempo = Some(Tempo { tempo });
+            }
+            Token::Time => {
+                token_stream.bump()?;
+                token_stream.expect(Token::Whitespace)?;
+                let time_signature = parse_time_signature(token_stream)?;
+                sequence.time_signature = Some(time_signature);
+            }
             Token::Backslash => {
                 token_stream.bump()?;
                 let chord = parse_named_chord(token_stream)?;
@@ -299,6 +311,30 @@ fn parse_sequence(token_stream: &mut TokenStream) -> ParseResult<Sequence> {
     }
 
     Ok(sequence)
+}
+
+fn parse_tempo(token_stream: &mut TokenStream) -> ParseResult<u32> {
+    let token = token_stream.expect(Token::Number)?;
+    let tempo = token
+        .slice()
+        .parse::<u32>()
+        .map_err(|e| ParsingError::ParseIntError(e).spanned_from_token(&token))?;
+    Ok(tempo)
+}
+
+fn parse_time_signature(token_stream: &mut TokenStream) -> ParseResult<TimeSignature> {
+    let token = token_stream.expect(Token::Number)?;
+    let numerator = token
+        .slice()
+        .parse::<u8>()
+        .map_err(|e| ParsingError::ParseIntError(e).spanned_from_token(&token))?;
+    token_stream.skip_whitespace();
+    let token = token_stream.expect(Token::Number)?;
+    let denominator = token
+        .slice()
+        .parse::<u8>()
+        .map_err(|e| ParsingError::ParseIntError(e).spanned_from_token(&token))?;
+    Ok(TimeSignature::new(numerator, denominator))
 }
 
 fn parse_note_name(token_stream: &mut TokenStream) -> ParseResult<NoteName> {
@@ -466,8 +502,6 @@ fn parse_named_chord(token_stream: &mut TokenStream) -> ParseResult<NamedChord> 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    impl SpannedParsingError {}
 
     #[test]
     fn test_parse_one_bar() {

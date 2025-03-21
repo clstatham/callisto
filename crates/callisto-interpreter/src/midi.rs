@@ -6,21 +6,22 @@ use midly::{
 
 use crate::syntax::*;
 
-const PPQ: u32 = 96;
+const TICKS_PER_BEAT: u32 = 96;
 
 const MAJOR_SCALE: [u8; 7] = [0, 2, 4, 5, 7, 9, 11];
 const MINOR_SCALE: [u8; 7] = [0, 2, 3, 5, 7, 8, 10];
 const DIMINISHED_SCALE: [u8; 7] = [0, 2, 3, 5, 6, 8, 10];
 const AUGMENTED_SCALE: [u8; 7] = [0, 2, 4, 5, 7, 9, 11];
 
-pub fn midi_named_chord(
-    root: NoteName,
-    root_accidental: Accidental,
-    root_octave_number: i32,
-    quality: ChordQuality,
-    extensions: &[ChordExtension],
-) -> Vec<u8> {
-    let root = midi_note(root, root_accidental, root_octave_number);
+pub fn midi_named_chord(chord: &ChordName) -> Vec<u8> {
+    let ChordName {
+        root,
+        root_accidental,
+        root_octave_number,
+        quality,
+        extensions,
+    } = chord;
+    let root = midi_note(*root, *root_accidental, *root_octave_number);
     let root = root.as_int();
 
     let scale = match quality {
@@ -30,7 +31,10 @@ pub fn midi_named_chord(
         ChordQuality::Augmented => AUGMENTED_SCALE,
     };
 
-    let mut chord = vec![root, root + scale[2], root + scale[4]];
+    let mut chord = vec![root, root + scale[2], root + scale[4]]; // root, third, fifth
+    if extensions.contains(&ChordExtension::Sixth) {
+        chord.push(root + scale[5]);
+    }
     if extensions.contains(&ChordExtension::Seventh) {
         chord.push(root + scale[6]);
     }
@@ -46,20 +50,6 @@ pub fn midi_named_chord(
     chord.sort();
     chord.dedup();
     chord
-}
-
-pub fn midi_note_length(note_length: NoteLength) -> u28 {
-    let length = match note_length {
-        NoteLength::SixtyFourth => PPQ / 16,
-        NoteLength::ThirtySecond => PPQ / 8,
-        NoteLength::Sixteenth => PPQ / 4,
-        NoteLength::Eighth => PPQ / 2,
-        NoteLength::Quarter => PPQ,
-        NoteLength::Half => PPQ * 2,
-        NoteLength::Whole => PPQ * 4,
-        NoteLength::Bars(bars) => PPQ * 4 * bars,
-    };
-    u28::new(length)
 }
 
 pub fn midi_note(name: NoteName, accidental: Accidental, octave: i32) -> u7 {
@@ -93,19 +83,39 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
 
     let mut midi = Smf::new(Header::new(
         Format::SingleTrack,
-        Timing::Metrical(u15::new(PPQ as u16)),
+        Timing::Metrical(u15::new(TICKS_PER_BEAT as u16)),
     ));
 
     let mut track = Vec::new();
 
-    track.push(TrackEvent {
-        delta: u28::new(0),
-        kind: TrackEventKind::Meta(MetaMessage::Tempo(u24::new(500_000))),
-    });
+    let tempo = if let Some(Tempo { tempo }) = notes.tempo {
+        tempo
+    } else {
+        120
+    };
+
+    // convert to microseconds per beat
+    let tempo = 60_000_000 / tempo;
 
     track.push(TrackEvent {
         delta: u28::new(0),
-        kind: TrackEventKind::Meta(MetaMessage::TimeSignature(4, 2, 36, 8)),
+        kind: TrackEventKind::Meta(MetaMessage::Tempo(u24::new(tempo))),
+    });
+
+    let time_signature = if let Some(time_signature) = notes.time_signature {
+        time_signature
+    } else {
+        TimeSignature::new(4, 4)
+    };
+
+    track.push(TrackEvent {
+        delta: u28::new(0),
+        kind: TrackEventKind::Meta(MetaMessage::TimeSignature(
+            time_signature.numerator.get(),
+            time_signature.denominator.get(),
+            36,
+            8,
+        )),
     });
 
     for event in notes.notes.iter() {
@@ -138,7 +148,7 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
                 };
 
                 let second_event = TrackEvent {
-                    delta: midi_note_length(note_length),
+                    delta: u28::new(note_length.ticks(TICKS_PER_BEAT, time_signature)),
                     kind: TrackEventKind::Midi {
                         channel: u4::new(0),
                         message: second_message,
@@ -150,7 +160,7 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
             }
             SeqEvent::ListChord(chord) => {
                 let ListChord { notes, note_length } = chord;
-                let chord_length = midi_note_length(*note_length);
+                let chord_length = u28::new(note_length.ticks(TICKS_PER_BEAT, time_signature));
                 let mut chord_events = Vec::new();
                 let mut stop_events = Vec::new();
 
@@ -199,14 +209,8 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
                     chord_name,
                     note_length,
                 } = named_chord;
-                let chord_length = midi_note_length(*note_length);
-                let chord_notes = midi_named_chord(
-                    chord_name.root,
-                    chord_name.root_accidental,
-                    chord_name.root_octave_number,
-                    chord_name.quality,
-                    &chord_name.extensions,
-                );
+                let chord_length = u28::new(note_length.ticks(TICKS_PER_BEAT, time_signature));
+                let chord_notes = midi_named_chord(chord_name);
 
                 let mut chord_events = Vec::new();
                 let mut stop_events = Vec::new();
@@ -260,13 +264,17 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
 
 #[cfg(test)]
 mod tests {
-    use std::fs::File;
-
     use super::*;
 
     #[test]
     fn test_midi() {
-        let input = r"{ \E4min7|1 \C4majadd9|1 }";
+        let input = r"
+{ 
+    tempo 120
+    time 4 4
+    \E4min7|1 
+    \C4majadd9|1
+}";
 
         let ast = crate::parser::parse(input);
         let ast = match ast {
@@ -275,7 +283,7 @@ mod tests {
         };
         let midi = ast_to_midi(&ast).unwrap();
 
-        midi.write_std(&mut File::create("test.mid").unwrap())
+        midi.write_std(&mut std::fs::File::create("test.mid").unwrap())
             .unwrap();
     }
 }

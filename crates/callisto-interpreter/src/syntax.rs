@@ -1,4 +1,4 @@
-use std::str::FromStr;
+use std::{num::NonZeroU8, str::FromStr};
 
 use logos::Logos;
 
@@ -41,6 +41,47 @@ pub enum Token {
     ChordExtension,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Tempo {
+    pub tempo: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct TimeSignature {
+    /// The number of beats in a measure.
+    /// For example, 4 beats in 4/4 time.
+    pub numerator: NonZeroU8,
+    /// The type of note that gets one beat.
+    /// For example, a quarter note gets one beat in 4/4 time.
+    pub denominator: NonZeroU8,
+}
+
+impl Default for TimeSignature {
+    fn default() -> Self {
+        TimeSignature {
+            numerator: NonZeroU8::new(4).unwrap(),
+            denominator: NonZeroU8::new(4).unwrap(),
+        }
+    }
+}
+
+impl TimeSignature {
+    pub fn new(numerator: u8, denominator: u8) -> Self {
+        TimeSignature {
+            numerator: NonZeroU8::new(numerator).unwrap(),
+            denominator: NonZeroU8::new(denominator).unwrap(),
+        }
+    }
+
+    pub fn ticks_per_measure(&self, ticks_per_quarter: u32) -> u32 {
+        (self.numerator.get() as u32 * ticks_per_quarter) / self.denominator.get() as u32
+    }
+
+    pub fn ticks_per_beat(&self, ticks_per_quarter: u32) -> u32 {
+        ticks_per_quarter / self.denominator.get() as u32
+    }
+}
+
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Root {
     pub statements: Vec<Statement>,
@@ -53,6 +94,8 @@ pub enum Statement {
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Sequence {
+    pub tempo: Option<Tempo>,
+    pub time_signature: Option<TimeSignature>,
     pub notes: Vec<SeqEvent>,
 }
 
@@ -115,6 +158,7 @@ impl FromStr for ChordQuality {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ChordExtension {
+    Sixth,
     Seventh,
     Ninth,
     Eleventh,
@@ -126,6 +170,7 @@ impl FromStr for ChordExtension {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "add6" => Ok(ChordExtension::Sixth),
             "add9" => Ok(ChordExtension::Ninth),
             "add11" => Ok(ChordExtension::Eleventh),
             "add13" => Ok(ChordExtension::Thirteenth),
@@ -199,6 +244,33 @@ pub enum NoteLength {
     #[default]
     Whole,
     Bars(u32),
+}
+
+impl NoteLength {
+    pub fn ticks(self, ticks_per_beat: u32, time_signature: TimeSignature) -> u32 {
+        match self {
+            NoteLength::SixtyFourth => ticks_per_beat / 16,
+            NoteLength::ThirtySecond => ticks_per_beat / 8,
+            NoteLength::Sixteenth => ticks_per_beat / 4,
+            NoteLength::Eighth => ticks_per_beat / 2,
+            NoteLength::Quarter => ticks_per_beat,
+            NoteLength::Half => ticks_per_beat * 2,
+            NoteLength::Whole => ticks_per_beat * 4,
+            NoteLength::Bars(bars) => {
+                let denominator_ticks = match time_signature.denominator.get() {
+                    1 => ticks_per_beat * 4,
+                    2 => ticks_per_beat * 2,
+                    4 => ticks_per_beat,
+                    8 => ticks_per_beat / 2,
+                    16 => ticks_per_beat / 4,
+                    32 => ticks_per_beat / 8,
+                    64 => ticks_per_beat / 16,
+                    _ => panic!("Unsupported denominator"),
+                };
+                denominator_ticks * bars * time_signature.numerator.get() as u32
+            }
+        }
+    }
 }
 
 impl FromStr for NoteLength {
