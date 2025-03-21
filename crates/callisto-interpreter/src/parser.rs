@@ -304,6 +304,11 @@ fn parse_sequence(token_stream: &mut TokenStream) -> ParseResult<Sequence> {
                 let note = parse_single_note(token_stream)?;
                 sequence.notes.push(SeqEvent::Single(note));
             }
+            Token::Rest => {
+                token_stream.bump()?;
+                let note_length = parse_note_length(token_stream)?;
+                sequence.notes.push(SeqEvent::Rest(note_length));
+            }
             _ => {
                 return Err(ParsingError::UnexpectedToken(token.token).spanned_from_token(token));
             }

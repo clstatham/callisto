@@ -9,10 +9,10 @@ pub enum Token {
     Whitespace,
     #[regex(r"[0-9]+")]
     Number,
+    #[regex(r"[A-G]", priority = 3)]
+    NoteName,
     #[token(r"#")]
     Sharp,
-    #[regex(r"[A-Ga-g]", priority = 3)]
-    NoteName,
     #[token(r"b", priority = 4)]
     Flat,
     #[token(r":")]
@@ -31,10 +31,42 @@ pub enum Token {
     OBracket,
     #[token(r"]")]
     CBracket,
+    #[token(r"(")]
+    OParen,
+    #[token(r")")]
+    CParen,
+    #[token(r",")]
+    Comma,
+    #[token(r".")]
+    Dot,
+    #[token(r"-")]
+    Minus,
+    #[token(r"=")]
+    Equal,
+    #[token(r"~")]
+    Tilde,
+    #[token(r"@")]
+    At,
+    #[token(r"!")]
+    Bang,
+    #[token(r"?")]
+    Question,
+    #[token(r";")]
+    Semicolon,
+    #[token(r"'")]
+    SingleQuote,
+    #[token(r#"""#)]
+    DoubleQuote,
+    #[token(r"seq")]
+    Seq,
+    #[token(r"loop")]
+    Loop,
     #[token(r"tempo")]
     Tempo,
     #[token(r"time")]
     Time,
+    #[token(r"z")]
+    Rest,
     #[regex(r"maj|min|dim|aug")]
     ChordQuality,
     #[regex(r"add9|add11|add13")]
@@ -101,6 +133,7 @@ pub struct Sequence {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum SeqEvent {
+    Rest(NoteLength),
     Single(SingleNote),
     ListChord(ListChord),
     NamedChord(NamedChord),

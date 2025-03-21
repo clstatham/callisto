@@ -118,8 +118,28 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
         )),
     });
 
+    let mut ticks_since_last_event = 0;
+
+    macro_rules! advance_ticks {
+        ($delta:expr) => {{
+            ticks_since_last_event += $delta;
+        }};
+    }
+
+    macro_rules! event_tick {
+        () => {{
+            let delta = u28::new(ticks_since_last_event);
+            ticks_since_last_event = 0;
+            delta
+        }};
+    }
+
     for event in notes.notes.iter() {
         match event {
+            SeqEvent::Rest(note_length) => {
+                advance_ticks!(note_length.ticks(TICKS_PER_BEAT, time_signature));
+                continue;
+            }
             SeqEvent::Single(note) => {
                 let &SingleNote {
                     note_name,
@@ -140,15 +160,17 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
                 };
 
                 let first_event = TrackEvent {
-                    delta: u28::new(0),
+                    delta: event_tick!(),
                     kind: TrackEventKind::Midi {
                         channel: u4::new(0),
                         message: first_message,
                     },
                 };
 
+                advance_ticks!(note_length.ticks(TICKS_PER_BEAT, time_signature));
+
                 let second_event = TrackEvent {
-                    delta: u28::new(note_length.ticks(TICKS_PER_BEAT, time_signature)),
+                    delta: event_tick!(),
                     kind: TrackEventKind::Midi {
                         channel: u4::new(0),
                         message: second_message,
@@ -160,7 +182,6 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
             }
             SeqEvent::ListChord(chord) => {
                 let ListChord { notes, note_length } = chord;
-                let chord_length = u28::new(note_length.ticks(TICKS_PER_BEAT, time_signature));
                 let mut chord_events = Vec::new();
                 let mut stop_events = Vec::new();
 
@@ -183,14 +204,19 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
                     };
 
                     let first_event = TrackEvent {
-                        delta: u28::new(0),
+                        delta: if i == 0 { event_tick!() } else { u28::new(0) },
                         kind: TrackEventKind::Midi {
                             channel: u4::new(0),
                             message: first_message,
                         },
                     };
+
+                    if i == 0 {
+                        advance_ticks!(note_length.ticks(TICKS_PER_BEAT, time_signature));
+                    }
+
                     let second_event = TrackEvent {
-                        delta: if i == 0 { chord_length } else { u28::new(0) },
+                        delta: if i == 0 { event_tick!() } else { u28::new(0) },
                         kind: TrackEventKind::Midi {
                             channel: u4::new(0),
                             message: second_message,
@@ -209,7 +235,6 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
                     chord_name,
                     note_length,
                 } = named_chord;
-                let chord_length = u28::new(note_length.ticks(TICKS_PER_BEAT, time_signature));
                 let chord_notes = midi_named_chord(chord_name);
 
                 let mut chord_events = Vec::new();
@@ -228,14 +253,19 @@ pub fn ast_to_midi(ast: &Root) -> Result<Smf, Box<dyn Error>> {
                     };
 
                     let first_event = TrackEvent {
-                        delta: u28::new(0),
+                        delta: if i == 0 { event_tick!() } else { u28::new(0) },
                         kind: TrackEventKind::Midi {
                             channel: u4::new(0),
                             message: first_message,
                         },
                     };
+
+                    if i == 0 {
+                        advance_ticks!(note_length.ticks(TICKS_PER_BEAT, time_signature));
+                    }
+
                     let second_event = TrackEvent {
-                        delta: if i == 0 { chord_length } else { u28::new(0) },
+                        delta: if i == 0 { event_tick!() } else { u28::new(0) },
                         kind: TrackEventKind::Midi {
                             channel: u4::new(0),
                             message: second_message,
@@ -272,7 +302,8 @@ mod tests {
 { 
     tempo 120
     time 4 4
-    \E4min7|1 
+    \E4min7|1
+    z|1
     \C4majadd9|1
 }";
 
