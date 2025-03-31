@@ -1,0 +1,39 @@
+// comment
+
+// symbols
+:beat
+:C4
+:maj7
+
+// strings
+"foo"
+
+// variables
+let foo = 5
+
+// operators
+(+= foo 2)
+
+// functions
+(chord :C4 :maj7)
+(chord :E2 :min)
+
+// threads
+(every :quarter (do ()))
+
+// flow control
+(if (== foo 42) (print "Forty two") (print "Not forty two"))
+(loop 10 (do ()))
+
+// time control
+(sleep 100)
+
+// scopes (useful for effects)
+(with_fx :reverb (do ()))
+
+// builtin functions
+tempo           // set global tempo (bpm)
+time            // set global time signature
+play            // play a midi sequence using a synthdef
+bang            // signal to activate something, such as a sampler
+print           // print a value to the console

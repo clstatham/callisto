@@ -1,0 +1,6 @@
+(tempo 120)
+(time 4 4)
+
+(every :beat (do
+    (print 12345)
+))
