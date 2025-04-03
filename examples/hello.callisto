@@ -1,6 +1,2 @@
-(tempo 120)
-(time 4 4)
-
-(every :beat (do
-    (print 12345)
-))
+(define mix (* 0.5 (sine 440.0)))
+(~ dac mix mix)

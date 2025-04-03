@@ -1,22 +1,45 @@
 use std::collections::HashMap;
 
+use raug::prelude::{GraphBuilder, Node, Processor};
 use thiserror::Error;
-use value::Value;
+use value::{Value, ValueType};
 
-use crate::parser::syntax::Syntax;
+use crate::{
+    lexer::LexingError,
+    parser::{
+        ParsingError, parse_str,
+        syntax::{Syntax, SyntaxType},
+    },
+};
 
+pub mod builtins;
 pub mod value;
 
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum RuntimeError {
     #[error("Lexing error: {0}")]
-    LexingError(#[from] crate::lexer::LexingError),
+    LexingError(#[from] LexingError),
 
     #[error("Parsing error: {0}")]
-    ParsingError(#[from] crate::parser::ParsingError),
+    ParsingError(#[from] ParsingError),
 
-    #[error("Invalid type: {0}")]
-    TypeError(String),
+    #[error("Invalid argument count: expected {expected}, found {found}")]
+    InvalidArgumentCount { expected: usize, found: usize },
+
+    #[error("Syntax error: expected {expected:?}, found {found:?}")]
+    SyntaxError {
+        expected: SyntaxType,
+        found: SyntaxType,
+    },
+
+    #[error("Syntax error: {0:?}")]
+    InvalidSyntax(SyntaxType),
+
+    #[error("Type error: expected {expected:?}, found {found:?}")]
+    TypeError {
+        expected: ValueType,
+        found: ValueType,
+    },
 
     #[error("Undefined variable: {0}")]
     UndefinedVariable(String),
@@ -30,25 +53,81 @@ pub enum RuntimeError {
     #[error("Division by zero")]
     DivisionByZero,
 
-    #[error("Runtime error: {0}")]
+    #[error("Invalid operation: {operation} between {left:?} and {right:?}")]
+    InvalidOperation {
+        operation: String,
+        left: ValueType,
+        right: ValueType,
+    },
+
+    #[error("Cannot convert to graph node: {0:?}")]
+    CannotConvertToNode(ValueType),
+
+    #[error("scope error: {0}")]
     Other(String),
 }
 
-pub struct Runtime {
-    pub variables: HashMap<String, Value>,
-    pub functions: HashMap<String, Syntax>,
-    pub call_stack: Vec<String>,
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDef {
+    pub name: String,
+    pub parameters: Vec<String>,
+    pub body: Syntax,
 }
 
-impl Default for Runtime {
+pub fn execute_str(input: &str) -> Result<Value, RuntimeError> {
+    Vm::default().execute_str(input)
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Dac {
+    outputs: Vec<Node>,
+}
+
+#[derive(Clone, PartialEq)]
+pub struct Vm {
+    pub graph: GraphBuilder,
+    pub dac: Dac,
+}
+
+impl Default for Vm {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Runtime {
+impl Vm {
     pub fn new() -> Self {
         Self {
+            graph: GraphBuilder::new(),
+            dac: Dac {
+                outputs: Vec::new(),
+            },
+        }
+    }
+
+    pub fn execute_str(&self, input: &str) -> Result<Value, RuntimeError> {
+        Scope::new(self).execute_str(input)
+    }
+
+    pub fn add_audio_output(&mut self) -> Node {
+        let node = self.graph.add_audio_output();
+        self.dac.outputs.push(node.clone());
+        node
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct Scope<'vm> {
+    pub vm: &'vm Vm,
+    pub variables: HashMap<String, Value>,
+    pub functions: HashMap<String, FunctionDef>,
+    pub call_stack: Vec<String>,
+}
+
+impl<'vm> Scope<'vm> {
+    pub fn new(vm: &'vm Vm) -> Self {
+        Self {
+            vm,
             variables: HashMap::new(),
             functions: HashMap::new(),
             call_stack: Vec::new(),
@@ -56,7 +135,7 @@ impl Runtime {
     }
 
     pub fn execute_str(&mut self, input: &str) -> Result<Value, RuntimeError> {
-        let syntax_tree = crate::parser::parse_str(input)?;
+        let syntax_tree = parse_str(input)?;
         let mut result = Value::Null;
         for syntax in syntax_tree {
             result = self.execute(syntax)?;
@@ -70,6 +149,12 @@ impl Runtime {
             Syntax::Boolean(value) => Ok(Value::Boolean(value)),
             Syntax::Symbol(value) => Ok(Value::Symbol(value)),
             Syntax::String(value) => Ok(Value::String(value)),
+            Syntax::Identifier(name) => {
+                if let Some(value) = self.variables.get(&name) {
+                    return Ok(value.clone());
+                }
+                Err(RuntimeError::UndefinedVariable(name))
+            }
             Syntax::List(elements) => {
                 if elements.is_empty() {
                     return Ok(Value::Null);
@@ -81,13 +166,19 @@ impl Runtime {
                         return Ok(value.clone());
                     }
 
-                    match self.execute_builtin_function(&name, &elements[1..]) {
+                    self.call_stack.push(name.clone());
+                    let result = self.execute_builtin_function(&name, &elements[1..]);
+                    self.call_stack.pop();
+                    match result {
                         Ok(value) => return Ok(value),
                         Err(RuntimeError::UndefinedFunction(_)) => {}
                         Err(e) => return Err(e),
                     }
 
-                    match self.execute_function(&name, &elements[1..]) {
+                    self.call_stack.push(name.clone());
+                    let result = self.execute_function(&name, &elements[1..]);
+                    self.call_stack.pop();
+                    match result {
                         Ok(value) => return Ok(value),
                         Err(RuntimeError::UndefinedFunction(_)) => {}
                         Err(e) => return Err(e),
@@ -103,7 +194,7 @@ impl Runtime {
                     Ok(Value::List(values))
                 }
             }
-            syntax => Err(RuntimeError::Other(format!("Invalid syntax: {:?}", syntax))),
+            syntax => Err(RuntimeError::InvalidSyntax(syntax.syntax_type())),
         }
     }
 
@@ -112,128 +203,41 @@ impl Runtime {
         function: &str,
         arguments: &[Syntax],
     ) -> Result<Value, RuntimeError> {
-        self.call_stack.push(function.to_string());
-        self.call_stack.pop();
-        Err(RuntimeError::Other(format!(
-            "Function not found: {:?}",
-            function
-        )))
+        let function = self.get_function(function)?;
+
+        if function.parameters.len() != arguments.len() {
+            return Err(RuntimeError::InvalidArgumentCount {
+                expected: function.parameters.len(),
+                found: arguments.len(),
+            });
+        }
+
+        let mut local_variables = HashMap::new();
+        for (param, arg) in function.parameters.iter().zip(arguments) {
+            let value = self.execute(arg.clone())?;
+            local_variables.insert(param.clone(), value);
+        }
+
+        let mut scope = Scope::new(self.vm);
+        scope.variables.extend(local_variables);
+
+        let result = scope.execute(function.body)?;
+
+        Ok(result)
     }
 
-    fn execute_builtin_function(
+    fn builtin_processor<T: Processor>(
         &mut self,
-        function: &str,
+        processor: T,
         arguments: &[Syntax],
     ) -> Result<Value, RuntimeError> {
-        self.call_stack.push(function.to_string());
-        let value = match function {
-            "print" => {
-                for arg in arguments {
-                    let value = self.execute(arg.clone())?;
-                    println!("{:?}", value);
-                }
-                Ok(Value::Null)
-            }
-            "+" => {
-                let mut sum = 0.0;
-                for arg in arguments {
-                    let value = self.execute(arg.clone())?;
-                    if let Value::Number(num) = value {
-                        sum += num;
-                    } else {
-                        return Err(RuntimeError::TypeError(format!(
-                            "Expected number, found: {:?}",
-                            value
-                        )));
-                    }
-                }
-                Ok(Value::Number(sum))
-            }
-            "-" => {
-                if arguments.len() != 2 {
-                    return Err(RuntimeError::TypeError(format!(
-                        "Expected 2 arguments for '-', found: {}",
-                        arguments.len()
-                    )));
-                }
-                let a = self.execute(arguments[0].clone())?;
-                let b = self.execute(arguments[1].clone())?;
-                if let (Value::Number(a), Value::Number(b)) = (&a, &b) {
-                    Ok(Value::Number(a - b))
-                } else {
-                    Err(RuntimeError::TypeError(format!(
-                        "Expected numbers, found: {:?} and {:?}",
-                        a, b
-                    )))
-                }
-            }
-            "*" => {
-                let mut product = 1.0;
-                for arg in arguments {
-                    let value = self.execute(arg.clone())?;
-                    if let Value::Number(num) = value {
-                        product *= num;
-                    } else {
-                        return Err(RuntimeError::TypeError(format!(
-                            "Expected number, found: {:?}",
-                            value
-                        )));
-                    }
-                }
-                Ok(Value::Number(product))
-            }
-            "/" => {
-                if arguments.len() != 2 {
-                    return Err(RuntimeError::TypeError(format!(
-                        "Expected 2 arguments for '/', found: {}",
-                        arguments.len()
-                    )));
-                }
-                let a = self.execute(arguments[0].clone())?;
-                let b = self.execute(arguments[1].clone())?;
-                if let (Value::Number(a), Value::Number(b)) = (&a, &b) {
-                    if *b == 0.0 {
-                        return Err(RuntimeError::DivisionByZero);
-                    }
-                    Ok(Value::Number(a / b))
-                } else {
-                    Err(RuntimeError::TypeError(format!(
-                        "Expected numbers, found: {:?} and {:?}",
-                        a, b
-                    )))
-                }
-            }
-            "==" => {
-                if arguments.len() != 2 {
-                    return Err(RuntimeError::TypeError(format!(
-                        "Expected 2 arguments for 'eq?', found: {}",
-                        arguments.len()
-                    )));
-                }
-                let a = self.execute(arguments[0].clone())?;
-                let b = self.execute(arguments[1].clone())?;
-                Ok(Value::Boolean(a == b))
-            }
-            "!=" => {
-                if arguments.len() != 2 {
-                    return Err(RuntimeError::TypeError(format!(
-                        "Expected 2 arguments for '!=', found: {}",
-                        arguments.len()
-                    )));
-                }
-                let a = self.execute(arguments[0].clone())?;
-                let b = self.execute(arguments[1].clone())?;
-                Ok(Value::Boolean(a != b))
-            }
-
-            function => Err(RuntimeError::Other(format!(
-                "Unknown function: {}",
-                function
-            ))),
-        };
-
-        self.call_stack.pop();
-        value
+        let node = self.vm.graph.add(processor);
+        for (i, arg) in arguments.iter().enumerate() {
+            let value = self.execute(arg.clone())?;
+            let value = value.make_node(&self.vm.graph)?;
+            node.input(i).connect(value);
+        }
+        Ok(Value::Node(node))
     }
 
     pub fn set_variable(&mut self, name: String, value: Value) {
@@ -247,15 +251,15 @@ impl Runtime {
             .ok_or(RuntimeError::UndefinedVariable(name.to_string()))
     }
 
-    pub fn set_function(&mut self, name: String, function: Syntax) {
-        self.functions.insert(name, function);
+    pub fn set_function(&mut self, function: FunctionDef) {
+        self.functions.insert(function.name.clone(), function);
     }
 
-    pub fn get_function(&self, name: &str) -> Result<Syntax, RuntimeError> {
+    pub fn get_function(&self, name: &str) -> Result<FunctionDef, RuntimeError> {
         self.functions
             .get(name)
             .cloned()
-            .ok_or(RuntimeError::UndefinedVariable(name.to_string()))
+            .ok_or(RuntimeError::UndefinedFunction(name.to_string()))
     }
 
     pub fn call_stack(&self) -> &[String] {
@@ -268,37 +272,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_addition() {
-        let mut runtime = Runtime::new();
-        let result = runtime.execute_str("(+ 1 2 3)").unwrap();
-        assert_eq!(result, Value::Number(6.0));
-    }
-
-    #[test]
-    fn test_subtraction() {
-        let mut runtime = Runtime::new();
-        let result = runtime.execute_str("(- 5 3)").unwrap();
-        assert_eq!(result, Value::Number(2.0));
-    }
-
-    #[test]
-    fn test_multiplication() {
-        let mut runtime = Runtime::new();
-        let result = runtime.execute_str("(* 2 3 4)").unwrap();
-        assert_eq!(result, Value::Number(24.0));
-    }
-
-    #[test]
-    fn test_division() {
-        let mut runtime = Runtime::new();
-        let result = runtime.execute_str("(/ 8 2)").unwrap();
-        assert_eq!(result, Value::Number(4.0));
-    }
-
-    #[test]
-    fn test_nested() {
-        let mut runtime = Runtime::new();
-        let result = runtime.execute_str("(+ 1 (* 2 3))").unwrap();
-        assert_eq!(result, Value::Number(7.0));
+    fn test_sine() {
+        let result = execute_str("(* 0.5 (sine 440.0))").unwrap();
+        assert!(matches!(result, Value::Output(_)));
     }
 }
