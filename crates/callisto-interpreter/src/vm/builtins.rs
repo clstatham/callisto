@@ -1,11 +1,6 @@
-use raug::prelude::*;
-
 use crate::parser::syntax::{Syntax, SyntaxType};
 
-use super::{
-    FunctionDef, RuntimeError, Scope,
-    value::{Value, ValueType},
-};
+use super::{FunctionDef, RuntimeError, Scope, value::Value};
 
 impl Scope<'_> {
     pub fn execute_builtin_function(
@@ -216,28 +211,6 @@ impl Scope<'_> {
                 let b = self.execute(arguments[1].clone())?;
                 a.div(&b)
             }
-            "~" => {
-                if arguments.len() < 2 {
-                    return Err(RuntimeError::InvalidArgumentCount {
-                        expected: 2,
-                        found: arguments.len(),
-                    });
-                }
-                let target = self.execute(arguments[0].clone())?;
-                let Value::Node(target) = target else {
-                    return Err(RuntimeError::TypeError {
-                        expected: ValueType::Node,
-                        found: target.value_type(),
-                    });
-                };
-                for (i, arg) in arguments[1..].iter().enumerate() {
-                    let value = self.execute(arg.clone())?;
-                    let value = value.make_node(&self.vm.graph)?;
-                    target.input(i).connect(value);
-                }
-                Ok(Value::Node(target))
-            }
-            "sine" => self.builtin_processor(SineOscillator::default(), arguments),
 
             _ => Err(RuntimeError::UndefinedFunction(function.to_string())),
         }

@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use raug::prelude::{GraphBuilder, Node, Processor};
 use thiserror::Error;
 use value::{Value, ValueType};
 
@@ -78,16 +77,8 @@ pub fn execute_str(input: &str) -> Result<Value, RuntimeError> {
     Vm::default().execute_str(input)
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Dac {
-    outputs: Vec<Node>,
-}
-
 #[derive(Clone, PartialEq)]
-pub struct Vm {
-    pub graph: GraphBuilder,
-    pub dac: Dac,
-}
+pub struct Vm {}
 
 impl Default for Vm {
     fn default() -> Self {
@@ -97,22 +88,11 @@ impl Default for Vm {
 
 impl Vm {
     pub fn new() -> Self {
-        Self {
-            graph: GraphBuilder::new(),
-            dac: Dac {
-                outputs: Vec::new(),
-            },
-        }
+        Self {}
     }
 
     pub fn execute_str(&self, input: &str) -> Result<Value, RuntimeError> {
         Scope::new(self).execute_str(input)
-    }
-
-    pub fn add_audio_output(&mut self) -> Node {
-        let node = self.graph.add_audio_output();
-        self.dac.outputs.push(node.clone());
-        node
     }
 }
 
@@ -226,20 +206,6 @@ impl<'vm> Scope<'vm> {
         Ok(result)
     }
 
-    fn builtin_processor<T: Processor>(
-        &mut self,
-        processor: T,
-        arguments: &[Syntax],
-    ) -> Result<Value, RuntimeError> {
-        let node = self.vm.graph.add(processor);
-        for (i, arg) in arguments.iter().enumerate() {
-            let value = self.execute(arg.clone())?;
-            let value = value.make_node(&self.vm.graph)?;
-            node.input(i).connect(value);
-        }
-        Ok(Value::Node(node))
-    }
-
     pub fn set_variable(&mut self, name: String, value: Value) {
         self.variables.insert(name, value);
     }
@@ -264,16 +230,5 @@ impl<'vm> Scope<'vm> {
 
     pub fn call_stack(&self) -> &[String] {
         &self.call_stack
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_sine() {
-        let result = execute_str("(* 0.5 (sine 440.0))").unwrap();
-        assert!(matches!(result, Value::Output(_)));
     }
 }
